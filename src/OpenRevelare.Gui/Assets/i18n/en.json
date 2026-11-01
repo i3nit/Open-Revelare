@@ -1216,5 +1216,9 @@
   "牛顿环区域笔：拖动涂抹任意形状，完成后点击修复手绘区域；[ / ] 调整半径。": "Fringe brush: paint any shape, then click Repair painted regions. Use [ / ] to change the radius.",
   "牛顿环排除笔：涂抹保留原图的区域。": "Fringe exclusion brush: paint regions to preserve unchanged.",
   "  去牛顿环　实验 · 开启 {0} · 强度 {1:F2} · 亮度 {2:F2} · 候选覆盖 {3:P0}": "  Fringe removal: experimental · Enabled {0} · Strength {1:F2} · Luminance {2:F2} · Candidate coverage {3:P0}",
-  "  次序　　 去牛顿环（若启用） → 镜头畸变 → LCC → 暗角 → 除尘 → Path A 解耦 → 反相": "  Order: fringe removal (if enabled) → distortion → LCC → vignette → dust → Path A decouple → inversion"
+  "  次序　　 去牛顿环（若启用） → 镜头畸变 → LCC → 暗角 → 除尘 → Path A 解耦 → 反相": "  Order: fringe removal (if enabled) → distortion → LCC → vignette → dust → Path A decouple → inversion",
+  "AI 自动识别并修复（实验）": "AI automatic repair (experimental)",
+  "AI 修复手绘区域（实验）": "AI repair painted regions (experimental)",
+  "正在本地估计 AI 干涉残差 …": "Estimating AI interference residuals locally…",
+  "已应用实验性 AI 修复；请关闭蒙版比较细节，并排除误选。": "Experimental AI repair applied. Hide the mask to compare details and exclude false selections."
 }

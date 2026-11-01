@@ -1,23 +1,51 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Text.Json;
 using OpenRevelare.Core;
+using OpenRevelare.DeepWb.Onnx;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 
-if (args.Length < 3) { Console.Error.WriteLine("Usage: <output-directory> <ncproj-file-or-dash> <RAW> [RAW...] [--manual]"); return 2; }
+if (args.Length == 2 && args[0] == "--verify-ai-synthetic") return AiSyntheticVerification.Run(args[1]);
+
+if (args.Length < 3) { Console.Error.WriteLine("Usage: <output-directory> <ncproj-file-or-dash> <RAW> [RAW...] [--manual] [--ai] [--export-training] [--source-preview]"); return 2; }
 string output = Path.GetFullPath(args[0]); Directory.CreateDirectory(output);
 Project.Data? project = args[1] == "-" ? null : Project.Load(args[1]);
 var report = new List<object>();
 bool manual = args.Contains("--manual");
-foreach (string path in args.Skip(2).Where(a => a != "--manual"))
+bool ai = args.Contains("--ai");
+using var estimator = ai ? new OnnxNewtonEstimator() : null;
+string? modelSha = ai ? Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(OnnxNewtonEstimator.DefaultModelPath))).ToLowerInvariant() : null;
+foreach (string path in args.Skip(2).Where(a => !a.StartsWith("--")))
 {
     var timer = Stopwatch.StartNew();
-    var (images, w, h) = RawDecode.DecodeRawDownsampled(path, RawDecode.FbddMode.Off, new[] { 1600 }, RawDecode.Demosaic.Preview);
+    var (images, w, h) = RawDecode.DecodeRawDownsampled(path, RawDecode.FbddMode.Off, new[] { args.Contains("--export-training") ? 1400 : 1600 }, RawDecode.Demosaic.Preview);
     var pixels = images[0];
+    if (args.Contains("--export-training"))
+    {
+        using var writer = new BinaryWriter(File.Create(Path.Combine(output, Path.GetFileNameWithoutExtension(path) + ".rgbf")));
+        writer.Write(pixels.Width); writer.Write(pixels.Height);
+        foreach (float value in pixels.Data) writer.Write(value);
+        continue;
+    }
     var p = project?.Frames.FirstOrDefault(f => Path.GetFileName(f.SourcePath) == Path.GetFileName(path))?.Params.Clone() ?? new FrameParams();
     p.NewtonEnabled = false;
-    var before = Pipeline.ProcessFrame(pixels, p);
-    var field = NewtonRings.Analyse(pixels, .5, manual: manual);
+    ImageBuffer Render(FrameParams parameters)
+    {
+        if (!args.Contains("--source-preview")) return Pipeline.ProcessFrame(pixels, parameters);
+        // Positive-film diagnostic: view source transmission without negative inversion.
+        // This intentionally does not claim to reproduce a project's final colour grade.
+        var image = new ImageBuffer(pixels.Width, pixels.Height, (float[])pixels.Data.Clone());
+        NewtonRings.Apply(image, parameters);
+        if (parameters.DistortionK1 != 0) image = LensCorrections.ApplyDistortion(image, parameters.DistortionK1);
+        image = Geometry.ApplyOrientation(image, parameters.QuarterTurns, parameters.FlipH, parameters.FlipV);
+        image = Geometry.ApplyRotation(image, parameters.Rotation, 0);
+        if (parameters.CropRect is {} crop) image = Geometry.ApplyCrop(image, crop);
+        for (int i = 0; i < image.Data.Length; i++) image.Data[i] = Srgb.LinearToSrgb(image.Data[i]);
+        return image;
+    }
+    var before = Render(p);
+    var field = estimator?.Estimate(pixels, .5) ?? NewtonRings.Analyse(pixels, .5, manual: manual);
     p.NewtonEnabled = true; p.NewtonField = field; p.NewtonAutomatic = !manual; p.NewtonStrength = .8; p.NewtonLuminance = .25;
     if (manual)
     {
@@ -26,7 +54,7 @@ foreach (string path in args.Skip(2).Where(a => a != "--manual"))
         for (double y = .05; y < 1; y += .1) for (double x = .05; x < 1; x += .1)
             p.NewtonStrokes.Add(new NewtonStroke(x,y,.14));
     }
-    var after = Pipeline.ProcessFrame(pixels, p);
+    var after = Render(p);
     var mask = NewtonRings.Mask(pixels.Width, pixels.Height, field, !manual, p.NewtonStrokes);
     var flags = new ImageBuffer(pixels.Width, pixels.Height);
     for (int i=0;i<mask.Length;i++) for (int c=0;c<3;c++) flags.Data[3*i+c]=mask[i];
@@ -50,7 +78,7 @@ foreach (string path in args.Skip(2).Where(a => a != "--manual"))
     string name=Path.GetFileNameWithoutExtension(path);
     comparison.SaveAsJpeg(Path.Combine(output,name+"-comparison.jpg"));
     File.WriteAllText(Path.Combine(output,name+"-field.txt"),field.Encode());
-    report.Add(new { File=Path.GetFileName(path), SourceWidth=w, SourceHeight=h, ManualWholeSourceStressTest=manual, field.Coverage,
+    report.Add(new { File=Path.GetFileName(path), SourceWidth=w, SourceHeight=h, Ai=ai, ModelSha256=modelSha, SourcePreview=args.Contains("--source-preview"), ManualWholeSourceStressTest=manual, field.Coverage,
         MeanAbsoluteRenderedChange=delta/before.Data.Length, Milliseconds=timer.ElapsedMilliseconds });
     Console.WriteLine($"{name}: candidate={field.Coverage:P1}, mean change={delta/before.Data.Length:G4}, {timer.ElapsedMilliseconds} ms");
 }

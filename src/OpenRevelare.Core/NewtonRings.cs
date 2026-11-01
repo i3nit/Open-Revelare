@@ -25,6 +25,30 @@ public sealed class NewtonField
         // same correction rather than introducing a fresh rounding step on every round trip.
         for (int i = 0; i < data.Length; i++) _data[i] = (float)(Math.Round(Math.Clamp(data[i], -1, 1) * 16384) / 16384);
     }
+    /// <summary>Convert a learned log-RGB interference estimate into the same immutable field
+    /// used by the spectral path. A model never receives permission to replace image pixels.</summary>
+    public static NewtonField FromLogResidual(ImageBuffer residual, IReadOnlyList<float> confidence)
+    {
+        ArgumentNullException.ThrowIfNull(residual);
+        ArgumentNullException.ThrowIfNull(confidence);
+        if (residual.Width < 1 || residual.Height < 1 || residual.Width > 1024 || residual.Height > 1024
+            || confidence.Count != residual.PixelCount) throw new ArgumentException("Invalid AI field dimensions.");
+        var values = new float[checked(residual.PixelCount * 5)];
+        for (int i = 0; i < residual.PixelCount; i++)
+        {
+            float r = residual.Data[i * 3], g = residual.Data[i * 3 + 1], b = residual.Data[i * 3 + 2];
+            float mask = confidence[i];
+            if (!float.IsFinite(r + g + b + mask)) throw new InvalidDataException("AI returned non-finite values.");
+            float luma = (r + g + b) / 3;
+            values[i * 5] = Math.Clamp(r - luma, -.4f, .4f);
+            values[i * 5 + 1] = Math.Clamp(g - luma, -.4f, .4f);
+            values[i * 5 + 2] = Math.Clamp(b - luma, -.4f, .4f);
+            values[i * 5 + 3] = Math.Clamp(luma, -.4f, .4f);
+            values[i * 5 + 4] = Math.Clamp(mask, 0, 1);
+        }
+        return new NewtonField(residual.Width, residual.Height, values);
+    }
+
     public float Sample(double x, double y, int channel)
     {
         double fx = Math.Clamp(x * Width - .5, 0, Width - 1), fy = Math.Clamp(y * Height - .5, 0, Height - 1);

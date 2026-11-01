@@ -10,9 +10,11 @@ public sealed class NewtonWorkflowTests
     // These exercise the real live-parameter/undo/project path, not just the filter. Painted
     // coordinates must survive crop, straighten and mirrors before the field is generated.
     [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task Automatic_and_painted_repairs_are_undoable_saved_and_do_not_edit_the_source(bool automatic)
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    public async Task Automatic_and_painted_repairs_are_undoable_saved_and_do_not_edit_the_source(bool automatic, bool ai)
     {
         string directory = Path.Combine(TestDataIsolation.Root, "newton-workflow-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
@@ -36,7 +38,10 @@ public sealed class NewtonWorkflowTests
             Assert.True(vm.PaintNewtonAt(.5,.6,false));
             vm.CommitNewtonStroke();
         }
-        await vm.AnalyseNewtonAsync(automatic);
+        var estimator = new TestEstimator();
+        if (ai) vm.NewtonAiEstimatorFactory = () => estimator;
+        if (ai) await vm.AnalyseNewtonAiAsync(automatic); else await vm.AnalyseNewtonAsync(automatic);
+        if (ai) Assert.True(estimator.Disposed);
         Assert.False(vm.IsNewtonAnalysing);
         Assert.True(vm.NewtonEnabled, vm.StatusText);
         Assert.True(vm.CurrentFrame!.Params.NewtonField is not null, "field after analysis: " + vm.StatusText);
@@ -55,9 +60,30 @@ public sealed class NewtonWorkflowTests
         vm.ClearNewton(); Assert.False(vm.NewtonEnabled); Assert.Null(vm.CurrentFrame.Params.NewtonField);
         vm.Undo(); Assert.True(vm.NewtonEnabled); Assert.True(vm.CurrentFrame.Params.NewtonField is not null, "field after undo clear");
         var previous = vm.CurrentFrame.Params.NewtonField;
+        if (ai)
+        {
+            vm.NewtonAiEstimatorFactory = () => throw new FileNotFoundException("missing optional model");
+            await vm.AnalyseNewtonAiAsync(automatic);
+            Assert.Same(previous, vm.CurrentFrame.Params.NewtonField);
+            Assert.Contains("missing optional model", vm.StatusText);
+            Assert.False(vm.IsBusy);
+        }
         vm.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(vm.StatusText) && vm.IsNewtonAnalysing) vm.CancelNewtonAnalysis(); };
-        await vm.AnalyseNewtonAsync(true);
+        if (ai) await vm.AnalyseNewtonAiAsync(true); else await vm.AnalyseNewtonAsync(true);
         Assert.Same(previous, vm.CurrentFrame.Params.NewtonField);
         Assert.False(vm.IsNewtonAnalysing);
     }
+    private sealed class TestEstimator : INewtonEstimator
+    {
+        public bool Disposed { get; private set; }
+        public NewtonField Estimate(ImageBuffer source, double sensitivity, CancellationToken cancellation = default)
+        {
+            cancellation.ThrowIfCancellationRequested();
+            var residual = new ImageBuffer(48, 40);
+            for (int i = 0; i < residual.Data.Length; i++) residual.Data[i] = (float)(.03 * Math.Sin(i * .1));
+            return NewtonField.FromLogResidual(residual, Enumerable.Repeat(.9f, residual.PixelCount).ToArray());
+        }
+        public void Dispose() => Disposed = true;
+    }
+
 }

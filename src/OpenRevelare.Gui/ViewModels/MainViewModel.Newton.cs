@@ -1,6 +1,7 @@
 using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using OpenRevelare.Core;
+using OpenRevelare.DeepWb.Onnx;
 using OpenRevelare.Gui.Interop;
 using OpenRevelare.Presentation;
 
@@ -93,7 +94,10 @@ public partial class MainViewModel
     }
     public void CancelNewtonAnalysis() => _newtonCts?.Cancel();
 
-    public async Task AnalyseNewtonAsync(bool automatic)
+    internal Func<INewtonEstimator>? NewtonAiEstimatorFactory { get; set; }
+    public Task AnalyseNewtonAiAsync(bool automatic) => AnalyseNewtonAsync(automatic, useAi: true);
+
+    public async Task AnalyseNewtonAsync(bool automatic, bool useAi = false)
     {
         if (CurrentFrame is not { } frame || !HasImage || IsBusy || _newtonCts is not null) return;
         if (!automatic && !_newtonStrokes.Any(s => !s.Erase))
@@ -105,9 +109,14 @@ public partial class MainViewModel
         OnPropertyChanged(nameof(IsNewtonAnalysing));
         try
         {
-            StatusText = Loc.T("正在分析局部干涉纹频谱 …");
+            StatusText = useAi ? Loc.T("正在本地估计 AI 干涉残差 …") : Loc.T("正在分析局部干涉纹频谱 …");
             var entry = await PreviewAsync(frame.Path, null).WaitAsync(cts.Token);
-            var field = await Task.Run(() => NewtonRings.Analyse(entry.Preview, sensitivity, cts.Token, manual: !automatic), cts.Token);
+            var field = await Task.Run(() =>
+            {
+                if (!useAi) return NewtonRings.Analyse(entry.Preview, sensitivity, cts.Token, manual: !automatic);
+                using var estimator = NewtonAiEstimatorFactory?.Invoke() ?? new OnnxNewtonEstimator();
+                return estimator.Estimate(entry.Preview, sensitivity, cts.Token);
+            }, cts.Token);
             cts.Token.ThrowIfCancellationRequested();
             if (_disposed || CurrentFrame != frame || !ReferenceEquals(_roll, roll) || _editVersion != version)
             { StatusText = Loc.T("牛顿环分析未应用：图像或参数已改变，请重试。"); return; }
@@ -116,7 +125,7 @@ public partial class MainViewModel
             _newtonField = field; _newtonAutomatic = automatic;
             NewtonEnabled = true; ShowNewtonMask = true;
             OnPropertyChanged(nameof(NewtonSummary)); UpdateNewtonOverlay(); ScheduleRender(); CommitUndo();
-            StatusText = automatic ? Loc.F($"已生成牛顿环候选并修复，候选覆盖 {field.Coverage:P0}；请检查误选并用排除笔调整。")
+            StatusText = useAi ? Loc.T("已应用实验性 AI 修复；请关闭蒙版比较细节，并排除误选。") : automatic ? Loc.F($"已生成牛顿环候选并修复，候选覆盖 {field.Coverage:P0}；请检查误选并用排除笔调整。")
                 : Loc.T("已修复手绘区域；可调整强度、亮度修复比例或关闭比较。");
         }
         catch (OperationCanceledException) { StatusText = Loc.T("牛顿环分析已取消，原修复保持不变。"); }

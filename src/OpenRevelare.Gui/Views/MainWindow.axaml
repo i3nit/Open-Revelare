@@ -1398,6 +1398,8 @@
                                     <TextBlock Classes="groupHint" TextWrapping="Wrap" Text="{i18n:T '分析任意形状的干涉纹；真实重复纹理也可能被误选，请检查范围并调整。'}" />
                                     <CheckBox Content="{i18n:T '启用去牛顿环'}" IsChecked="{Binding NewtonEnabled}" />
                                     <CheckBox Content="{i18n:T '显示牛顿环范围'}" IsChecked="{Binding ShowNewtonMask}" />
+                                    <Button Content="{i18n:T 'AI 自动识别并修复（实验）'}" Click="OnNewtonAiAutoClick" IsEnabled="{Binding HasImage}" />
+                                    <Button Content="{i18n:T 'AI 修复手绘区域（实验）'}" Click="OnNewtonAiManualClick" IsEnabled="{Binding HasImage}" />
                                     <Button Content="{i18n:T '自动识别并修复'}" Click="OnNewtonAutoClick" IsEnabled="{Binding HasImage}" />
                                     <ctl:SliderRow Label="{i18n:T '检测灵敏度'}" Minimum="0" Maximum="1" Decimals="2" Increment="0.05" DefaultValue="0.5" Value="{Binding NewtonSensitivity}" />
                                     <ctl:SliderRow Label="{i18n:T '修复强度'}" Minimum="0" Maximum="1" Decimals="2" Increment="0.05" DefaultValue="0.8" Value="{Binding NewtonStrength}" />
