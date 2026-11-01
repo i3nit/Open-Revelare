@@ -98,7 +98,9 @@ public sealed partial class MainViewModel
         sb.AppendLine(DustEnabled
             ? Loc.F($"  除尘　　 开启 · 手工修复 {_dustSpots.Count}")
             : Loc.T("  除尘　　 关闭"));
-        sb.AppendLine(Loc.T("  次序　　 镜头畸变 → LCC → 暗角 → 除尘 → Path A 解耦 → 片基 / 高光测量 → 反相"));
+        if (_newtonField is not null)
+            sb.AppendLine(Loc.F($"  去牛顿环　实验 · 开启 {NewtonEnabled} · 强度 {NewtonStrength:F2} · 亮度 {NewtonLuminance:F2} · 候选覆盖 {_newtonField.Coverage:P0}"));
+        sb.AppendLine(Loc.T("  次序　　 去牛顿环（若启用） → 镜头畸变 → LCC → 暗角 → 除尘 → Path A 解耦 → 反相"));
     }
 
     private static void AppendMatrix(StringBuilder sb, string label, double[,] matrix)

@@ -339,6 +339,11 @@ public static class Pipeline
         // copy the in-place ops then need. Clone only when distortion is inactive and an
         // in-place op still has to write somewhere private.
         ImageBuffer src = img;
+        if (cal.NewtonEnabled && cal.NewtonField is not null && cal.NewtonStrength > 0)
+        {
+            src = new ImageBuffer(img.Width, img.Height, (float[])img.Data.Clone()).InheritSourceFrom(img);
+            NewtonRings.Apply(src, cal);
+        }
 
         if (cal.DistortionK1 != 0.0)
             src = LensCorrections.ApplyDistortion(src, cal.DistortionK1);

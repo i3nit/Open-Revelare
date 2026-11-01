@@ -107,6 +107,15 @@ public partial class MainWindow : Window
                     // The crop frame belongs to the picture it was placed on. Carrying it to the
                     // next frame leaves a box sitting over a composition nobody chose it for, and
                     // the arriving frame's own crop stays suppressed while it does.
+                    if (IsNewtonMode)
+                    {
+                        // The arriving frame must never receive buffered points from its neighbour.
+                        _dustStrokeSamples.Clear(); _dustStrokeChanged = false; _dustStrokeLast = null;
+                        _dustStrokeTrail.Clear(); DustStrokePath.Points.Clear();
+                        DustStrokePath.IsVisible = false; DustStrokeStart.IsVisible = false;
+                        _dragging = false;
+                        ExitMode();
+                    }
                     if (_mode == SampleMode.Crop) ExitMode();
                     SyncCropPreset(vm);
                     ResetZoom();   // a new frame → back to fit
@@ -216,7 +225,7 @@ public partial class MainWindow : Window
     // Esc. The tools are mutually exclusive — arming one disarms the others.
     private enum SampleMode
     {
-        None, FilmBase, DMax, NeutralGrey, DisplayNeutral, Black, White, Crop, DustAdd, DustErase,
+        None, FilmBase, DMax, NeutralGrey, DisplayNeutral, Black, White, Crop, DustAdd, DustErase, NewtonAdd, NewtonErase,
         StraightenH, StraightenV,
     }
 
@@ -992,7 +1001,7 @@ public partial class MainWindow : Window
 
     private ToggleButton[] AllToggles() => new[]
     {
-        FilmBaseBtn, DMaxBtn, GreyBtn, BlackBtn, WhiteBtn, CropBtn, DustAddBtn, DustEraseBtn,
+        FilmBaseBtn, DMaxBtn, GreyBtn, BlackBtn, WhiteBtn, CropBtn, DustAddBtn, DustEraseBtn, NewtonAddBtn, NewtonEraseBtn,
         StraightenHBtn, StraightenVBtn,
     };
 
@@ -1009,7 +1018,7 @@ public partial class MainWindow : Window
         // true and the preview kept hiding the applied crop for the rest of the session, with a
         // draft rectangle left over to be re-shown later over a different picture.
         bool leavingCrop = _mode == SampleMode.Crop && mode != SampleMode.Crop;
-        bool leavingDust = IsDustMode && mode is not SampleMode.DustAdd and not SampleMode.DustErase;
+        bool leavingDust = IsDustMode && mode is not SampleMode.DustAdd and not SampleMode.DustErase and not SampleMode.NewtonAdd and not SampleMode.NewtonErase;
         if (_negativeShown) { Vm?.ShowPositiveView(); _negativeShown = false; }
         _mode = mode;
         if (leavingCrop) DiscardCropDraft();   // after _mode, so the frame actually hides
@@ -1067,6 +1076,21 @@ public partial class MainWindow : Window
 
     private void OnCropApplyClick(object? sender, RoutedEventArgs e) => CommitCrop();
     private void OnCropCancelClick(object? sender, RoutedEventArgs e) => CancelCropDraft();
+
+    private async void OnNewtonAutoClick(object? sender, RoutedEventArgs e) { ExitMode(); if (Vm is { } vm) await vm.AnalyseNewtonAsync(true); }
+    private async void OnNewtonManualClick(object? sender, RoutedEventArgs e) { ExitMode(); if (Vm is { } vm) await vm.AnalyseNewtonAsync(false); }
+    private void OnNewtonCancelClick(object? sender, RoutedEventArgs e) => Vm?.CancelNewtonAnalysis();
+    private void OnNewtonClearClick(object? sender, RoutedEventArgs e) { ExitMode(); Vm?.ClearNewton(); }
+    private void OnNewtonAddClick(object? sender, RoutedEventArgs e)
+    {
+        if (Vm is { } vm) vm.ShowNewtonMask = true;
+        ToggleSampling(sender, SampleMode.NewtonAdd, Loc.T("牛顿环区域笔：拖动涂抹任意形状，完成后点击修复手绘区域；[ / ] 调整半径。"), useNegative: false);
+    }
+    private void OnNewtonEraseClick(object? sender, RoutedEventArgs e)
+    {
+        if (Vm is { } vm) vm.ShowNewtonMask = true;
+        ToggleSampling(sender, SampleMode.NewtonErase, Loc.T("牛顿环排除笔：涂抹保留原图的区域。"), useNegative: false);
+    }
 
     private void OnDustAddClick(object? sender, RoutedEventArgs e) =>
         ToggleSampling(sender, SampleMode.DustAdd,
@@ -1184,6 +1208,8 @@ public partial class MainWindow : Window
         SampleMode.Black => BlackBtn,
         SampleMode.White => WhiteBtn,
         SampleMode.Crop => CropBtn,
+        SampleMode.NewtonAdd => NewtonAddBtn,
+        SampleMode.NewtonErase => NewtonEraseBtn,
         SampleMode.DustAdd => DustAddBtn,
         SampleMode.DustErase => DustEraseBtn,
         SampleMode.StraightenH => StraightenHBtn,
@@ -1346,7 +1372,8 @@ public partial class MainWindow : Window
                  e.Key is Key.OemOpenBrackets or Key.OemCloseBrackets)
         {
             int step = e.Key == Key.OemOpenBrackets ? -1 : 1;
-            dustVm.DustBrushSize = Math.Clamp(
+            if (IsNewtonMode) dustVm.NewtonBrushSize = Math.Clamp(dustVm.NewtonBrushSize + step * .005, .003, .2);
+            else dustVm.DustBrushSize = Math.Clamp(
                 Math.Round(dustVm.DustBrushSize + step * 0.001, 4), 0.001, 0.03);
             if (DustBrushRing.IsVisible)
                 UpdateDustBrushRing(new Point(
@@ -1866,7 +1893,8 @@ public partial class MainWindow : Window
         ReseedCropDraftFromCurrent();
     }
 
-    private bool IsDustMode => _mode is SampleMode.DustAdd or SampleMode.DustErase;
+    private bool IsNewtonMode => _mode is SampleMode.NewtonAdd or SampleMode.NewtonErase;
+    private bool IsDustMode => _mode is SampleMode.DustAdd or SampleMode.DustErase or SampleMode.NewtonAdd or SampleMode.NewtonErase;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct CursorPoint
@@ -1954,7 +1982,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        double radius = vm.DustBrushRadiusOnDisplay(n.X, n.Y, box.Width, box.Height);
+        double radius = vm.DustBrushRadiusOnDisplay(n.X, n.Y, box.Width, box.Height, IsNewtonMode ? vm.NewtonBrushSize : null);
         if (radius <= 0) return;
         Canvas.SetLeft(DustBrushRing, overlayPoint.X - radius);
         Canvas.SetTop(DustBrushRing, overlayPoint.Y - radius);
@@ -1973,7 +2001,7 @@ public partial class MainWindow : Window
         double dy = (normal.Y - start.Y) * box.Height;
         double distance = Math.Sqrt(dx * dx + dy * dy);
         if (_dustStrokeLast is not null && distance * _zoom < 0.5) return;
-        double radius = vm.DustBrushRadiusOnDisplay(normal.X, normal.Y, box.Width, box.Height);
+        double radius = vm.DustBrushRadiusOnDisplay(normal.X, normal.Y, box.Width, box.Height, IsNewtonMode ? vm.NewtonBrushSize : null);
         int samples = Math.Max(1, (int)Math.Ceiling(distance / Math.Max(1.0, radius * 0.55)));
         for (int i = 1; i <= samples; i++)
         {
@@ -2007,9 +2035,13 @@ public partial class MainWindow : Window
     private void EndDustStroke()
     {
         foreach (Point sample in _dustStrokeSamples)
-            _dustStrokeChanged |= Vm?.PaintDustAt(sample.X, sample.Y, erase: _mode == SampleMode.DustErase) == true;
+            _dustStrokeChanged |= IsNewtonMode
+                ? Vm?.PaintNewtonAt(sample.X, sample.Y, erase: _mode == SampleMode.NewtonErase) == true
+                : Vm?.PaintDustAt(sample.X, sample.Y, erase: _mode == SampleMode.DustErase) == true;
         if (_dustStrokeChanged && Vm is { } vm)
-            vm.CommitDustStroke(added: _mode == SampleMode.DustAdd);
+        {
+            if (IsNewtonMode) vm.CommitNewtonStroke(); else vm.CommitDustStroke(added: _mode == SampleMode.DustAdd);
+        }
         _dustStrokeChanged = false;
         _dustStrokeLast = null;
         _dustStrokeSamples.Clear();
@@ -2067,7 +2099,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (_mode is SampleMode.DustAdd or SampleMode.DustErase)
+        if (_mode is SampleMode.DustAdd or SampleMode.DustErase or SampleMode.NewtonAdd or SampleMode.NewtonErase)
         {
             if (NormFromOverlay(_dragStart) is not { } normal ||
                 normal.X < 0 || normal.X > 1 || normal.Y < 0 || normal.Y > 1) return;
@@ -2171,7 +2203,7 @@ public partial class MainWindow : Window
         // Finish a dust gesture before releasing capture. PointerCaptureLost also finalises an
         // interrupted stroke; releasing first would make a normal stroke commit there and then
         // treat the release position as a second edit.
-        if (mode is SampleMode.DustAdd or SampleMode.DustErase)
+        if (mode is SampleMode.DustAdd or SampleMode.DustErase or SampleMode.NewtonAdd or SampleMode.NewtonErase)
         {
             if (NormFromOverlay(end) is { } point && point.X >= 0 && point.X <= 1 && point.Y >= 0 && point.Y <= 1)
                 PaintDustSegment(point);

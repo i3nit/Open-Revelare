@@ -457,6 +457,15 @@ public sealed class FrameParams
     /// <summary>Editable manual repairs in source-normalised space.</summary>
     public List<DustSpot> DustSpots { get; set; } = new();
 
+    public bool NewtonEnabled { get; set; }
+    public double NewtonStrength { get; set; } = .8;
+    public double NewtonLuminance { get; set; } = .25;
+    public bool NewtonAutomatic { get; set; }
+    public NewtonField? NewtonField { get; set; }
+    public List<NewtonStroke> NewtonStrokes { get; set; } = new();
+    /// <summary>Transient file-space bounds for a decoded preview region; never persisted.</summary>
+    public (double X, double Y, double W, double H)? NewtonSourceRect { get; set; }
+
     // ── SceneBase adjustments (Stage 2, active only when intent == BASIC) ──────
     /// <summary>Per-channel white-balance gains (linear). Default 1 = pass-through.</summary>
     public double[] WbGains { get; set; } = { 1.0, 1.0, 1.0 };
@@ -561,6 +570,9 @@ public sealed class FrameParams
         SprocketThreshold = SprocketThreshold,
         DustEnabled = DustEnabled,
         DustSpots = new List<DustSpot>(DustSpots),
+        NewtonEnabled = NewtonEnabled, NewtonStrength = NewtonStrength, NewtonLuminance = NewtonLuminance,
+        NewtonAutomatic = NewtonAutomatic, NewtonField = NewtonField,
+        NewtonStrokes = new List<NewtonStroke>(NewtonStrokes), NewtonSourceRect = NewtonSourceRect,
         WbGains = (double[])WbGains.Clone(),
         ExposureEv = ExposureEv,
         BlackPoint = BlackPoint,

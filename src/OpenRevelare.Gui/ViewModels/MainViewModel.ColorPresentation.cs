@@ -198,6 +198,7 @@ public partial class MainViewModel
                 UpdateSprocketOverlay();
             if (ShowDustMask)
                 UpdateDustOverlay();
+            if (ShowNewtonMask) UpdateNewtonOverlay();
             PreviewHighlightHeadroom = histogram.TargetHeadroom;
             PreviewScene = scene;
             OnPropertyChanged(nameof(ColorPipelineDiagnostic));
@@ -214,6 +215,8 @@ public partial class MainViewModel
             ClippingScene = null;
             SprocketMaskScene = null;
             DustMaskScene = null;
+            NewtonMaskScene = null;
+            NewtonMaskOverlay = null;
         });
     }
 

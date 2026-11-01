@@ -17,14 +17,14 @@ namespace OpenRevelare.Core;
 /// </summary>
 public static class Project
 {
-    // Bumped to 3 by the managed colour pipeline and to 4 when a project first stores dust
-    // repairs. A managed project without dust remains v3 so older builds can still open it.
+    // v5 stores Newton correction fields; older builds must refuse rather than silently lose
+    // repairs. Projects without Newton edits retain their old v2/v3/v4 compatibility floor.
     // The v3 schema itself gained only one key, so
     // this is not about parsing: a build that predates `color_pipeline_version` reads a v2 file's
     // absent key as "legacy", which is right, but would read a NEW file's key as absent too and
     // render it through the v1 pipeline without a word. Refusing to open is the only honest
     // answer an old build can give, and it can only give it if the version says so.
-    private const int FormatVersion = 4;
+    private const int FormatVersion = 5;
 
     /// <summary>Oldest schema this build still reads. v2 files have no colour-pipeline key.</summary>
     private const int MinimumSupportedFormatVersion = 2;
@@ -37,8 +37,9 @@ public static class Project
     /// </summary>
     private static int FormatVersionFor(Data data)
     {
+        if (data.Frames.Any(f => f.Params.NewtonField is not null || f.Params.NewtonStrokes.Count > 0 || f.Params.NewtonEnabled)) return FormatVersion;
         bool hasDust = data.Frames.Any(f => f.Params.DustEnabled || f.Params.DustSpots.Count > 0);
-        if (hasDust) return FormatVersion;
+        if (hasDust) return 4;
         return data.ColorPipelineVersion == ColorPipelineVersion.ManagedV2 ? 3 : MinimumSupportedFormatVersion;
     }
     private const ColorPipelineVersion CurrentColorPipelineVersion = ColorPipelineVersion.ManagedV2;
@@ -508,6 +509,12 @@ public static class Project
             ["print_lut_output"] = p.PrintLutOutput,
             ["sprocket_enabled"] = p.SprocketEnabled,
             ["sprocket_threshold"] = p.SprocketThreshold,
+            ["newton_enabled"] = p.NewtonEnabled,
+            ["newton_strength"] = p.NewtonStrength,
+            ["newton_luminance"] = p.NewtonLuminance,
+            ["newton_automatic"] = p.NewtonAutomatic,
+            ["newton_field"] = p.NewtonField?.Encode(),
+            ["newton_strokes"] = new JsonArray(p.NewtonStrokes.Select(s => (JsonNode)new JsonArray(s.X, s.Y, s.Radius, s.Erase)).ToArray()),
             ["dust_enabled"] = p.DustEnabled,
             ["dust_spots"] = DustSpots(p.DustSpots),
             ["lensfun_override"] = null,                     // C# build has no lensfun
@@ -589,6 +596,12 @@ public static class Project
             SprocketEnabled = Bool(d, "sprocket_enabled", false),
             Monochrome = Bool(d, "monochrome", false),
             SprocketThreshold = d["sprocket_threshold"] is { } st ? st.GetValue<double>() : 0.9,
+            NewtonEnabled = Bool(d, "newton_enabled", false),
+            NewtonStrength = Dbl(d, "newton_strength", .8),
+            NewtonLuminance = Dbl(d, "newton_luminance", .25),
+            NewtonAutomatic = Bool(d, "newton_automatic", false),
+            NewtonField = NewtonField.Decode(Str(d, "newton_field", "")),
+            NewtonStrokes = DesNewtonStrokes(d["newton_strokes"]),
             DustEnabled = Bool(d, "dust_enabled", false),
             DustSpots = DesDustSpots(d["dust_spots"]),
             VignetteAmount = Dbl(d, "vignette_amount", 0.0),
@@ -634,6 +647,20 @@ public static class Project
     private static JsonArray Arr(double[] v) => new(v[0], v[1], v[2]);
     private static JsonArray Pts(List<(double X, double Y)> pts)
         => new(pts.Select(p => (JsonNode)new JsonArray(p.X, p.Y)).ToArray());
+
+    private static List<NewtonStroke> DesNewtonStrokes(JsonNode? node)
+    {
+        var result = new List<NewtonStroke>();
+        if (node is not JsonArray array) return result;
+        foreach (var item in array.Take(50000))
+        {
+            if (item is not JsonArray a || a.Count < 4) continue;
+            double x = a[0]!.GetValue<double>(), y = a[1]!.GetValue<double>(), r = a[2]!.GetValue<double>();
+            if (double.IsFinite(x + y + r) && x >= 0 && x <= 1 && y >= 0 && y <= 1 && r > 0 && r <= .5)
+                result.Add(new NewtonStroke(x, y, r, a[3]!.GetValue<bool>()));
+        }
+        return result;
+    }
 
     private static JsonArray DustSpots(List<DustSpot> spots) => new(spots.Select(s =>
         (JsonNode)new JsonArray(s.X, s.Y, s.Radius, s.Automatic, s.Confidence)).ToArray());
