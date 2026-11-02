@@ -197,6 +197,7 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     {
         if (_previewMargin is null) return p;                  // plain whole-file preview
         p = p.Clone();
+        p.NewtonSourceRect = _previewMargin.Value;
         p.DustSpots = DustSpotsRelativeTo(p.DustSpots, _previewMargin.Value);
         if (p.CropRect is null && _previewFrameRect is null) return p;
         // Oriented to match the pixels: ApplyCrop runs AFTER orientation, and _previewFrameRect is
@@ -236,6 +237,7 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     {
         if (margin is not { } box) return p;
         p = p.Clone();
+        p.NewtonSourceRect = box;
         p.DustSpots = DustSpotsRelativeTo(p.DustSpots, box);
         if (f.Params.CropRect is not { } rect) return p;
         // Down to file space, in against the box, back out to oriented space — the box itself is a
@@ -1123,22 +1125,26 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     /// probes back into the source handles crop, orientation, straightening and split scans, so the
     /// cursor ring describes the repair disc rather than merely echoing the slider value.</summary>
     public double DustBrushRadiusOnDisplay(
-        double displayedX, double displayedY, double displayedWidth, double displayedHeight)
+        double displayedX, double displayedY, double displayedWidth, double displayedHeight, double? brushSize = null)
     {
         if (displayedWidth <= 0 || displayedHeight <= 0 ||
-            DisplayPointToDustSource(displayedX, displayedY) is not { } center)
+            (brushSize is null ? DisplayPointToDustSource(displayedX, displayedY)
+                : DisplayPointToNewtonSource(displayedX, displayedY)) is not { } center)
             return 0;
 
         double stepX = 1.0 / displayedWidth, stepY = 1.0 / displayedHeight;
         double probeX = displayedX <= 0.5 ? displayedX + stepX : displayedX - stepX;
         double probeY = displayedY <= 0.5 ? displayedY + stepY : displayedY - stepY;
-        var horizontal = DisplayPointToDustSource(Math.Clamp(probeX, 0, 1), displayedY);
-        var vertical = DisplayPointToDustSource(displayedX, Math.Clamp(probeY, 0, 1));
+        var horizontal = brushSize is null ? DisplayPointToDustSource(Math.Clamp(probeX, 0, 1), displayedY)
+            : DisplayPointToNewtonSource(Math.Clamp(probeX, 0, 1), displayedY);
+        var vertical = brushSize is null ? DisplayPointToDustSource(displayedX, Math.Clamp(probeY, 0, 1))
+            : DisplayPointToNewtonSource(displayedX, Math.Clamp(probeY, 0, 1));
         if (horizontal is null || vertical is null) return 0;
-        double sourceUnitsPerPixel = (PhysicalSourceDistance(center, horizontal.Value)
-                                    + PhysicalSourceDistance(center, vertical.Value)) * 0.5;
+        double sourceUnitsPerPixel = brushSize is null
+            ? (PhysicalSourceDistance(center, horizontal.Value) + PhysicalSourceDistance(center, vertical.Value)) * .5
+            : (NewtonSourceDistance(center, horizontal.Value) + NewtonSourceDistance(center, vertical.Value)) * .5;
         return sourceUnitsPerPixel > 1e-9
-            ? Math.Clamp(DustBrushSize / sourceUnitsPerPixel, 1.5, 512.0)
+            ? Math.Clamp((brushSize ?? DustBrushSize) / sourceUnitsPerPixel, 1.5, 512.0)
             : 0;
     }
 
@@ -2125,6 +2131,8 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         SprocketThreshold = SprocketThreshold,
         DustEnabled = DustEnabled,
         DustSpots = new List<DustSpot>(_dustSpots),
+        NewtonEnabled = NewtonEnabled, NewtonStrength = NewtonStrength, NewtonLuminance = NewtonLuminance,
+        NewtonAutomatic = _newtonAutomatic, NewtonField = _newtonField, NewtonStrokes = new List<NewtonStroke>(_newtonStrokes),
         Monochrome = Monochrome,
         // Stage 1 — 反相的全部自由度：片基 + 两端各三个绝对密度
         TBase = TBaseArr(),
@@ -3414,6 +3422,7 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     private void CancelRollAnalysis()
     {
         CancelAutoCrop();
+        _newtonCts?.Cancel();
         _autoInvertCts?.Cancel();
         _autoInvertCts = null;
         RollAnalysisPending = false;
@@ -4453,6 +4462,7 @@ public partial class MainViewModel : ViewModelBase, IDisposable
     {
         _renderCts?.Cancel();
         // Stage 1 — lens / sprocket
+        LoadNewton(new FrameParams());
         DistortionK1 = 0; VignetteAmount = 0; VignetteFalloff = 2.5;
         SprocketEnabled = false; SprocketThreshold = 0.9;
         // Stage 1 — film base
@@ -4536,6 +4546,7 @@ public partial class MainViewModel : ViewModelBase, IDisposable
         if (_disposed) return;
         _disposed = true;
         CancelAutoCrop();
+        _newtonCts?.Cancel();
         CancelPreviewWarmup();
         _preparedPreviews.Clear();
         RenderTrace.SaveSummary();

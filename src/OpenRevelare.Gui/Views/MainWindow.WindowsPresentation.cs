@@ -391,6 +391,9 @@ public partial class MainWindow
                     sprocket.WithReferenceWhiteScale(referenceWhiteScale), imageDestination));
             }
 
+            if (vm.ShowNewtonMask && vm.NewtonMaskScene is { } newton)
+                overlays.Add(new PresentationOverlay(newton.WithReferenceWhiteScale(referenceWhiteScale), imageDestination));
+
             if (vm.ShowDustMask && vm.DustMaskScene is { } dust)
             {
                 overlays.Add(new PresentationOverlay(

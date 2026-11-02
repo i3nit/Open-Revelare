@@ -764,6 +764,9 @@
                             <Image Source="{Binding SprocketMaskOverlay}" Stretch="Uniform"
                                    IsVisible="{Binding ShowSprocketMask}" IsHitTestVisible="False"
                                    HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
+                            <Image Source="{Binding NewtonMaskOverlay}" Stretch="Uniform"
+                                   IsVisible="{Binding ShowNewtonMask}" IsHitTestVisible="False"
+                                   HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
                             <Image Source="{Binding DustMaskOverlay}" Stretch="Uniform"
                                    IsVisible="{Binding ShowDustMask}" IsHitTestVisible="False"
                                    HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
@@ -1395,6 +1398,32 @@
                                         <Run Text="{i18n:T '修复点：'}" /><Run Text="{Binding DustSpotCount}" />
                                     </TextBlock>
                                     <Button Content="{i18n:T '清除全部'}" Click="OnClearAllDustClick" IsEnabled="{Binding HasImage}" />
+                                </StackPanel>
+                            </Expander>
+
+                            <Expander Header="{i18n:T '去牛顿环（实验）'}">
+                                <StackPanel Spacing="6">
+                                    <TextBlock Classes="groupHint" TextWrapping="Wrap" Text="{i18n:T '分析任意形状的干涉纹；真实重复纹理也可能被误选，请检查范围并调整。'}" />
+                                    <CheckBox Content="{i18n:T '启用去牛顿环'}" IsChecked="{Binding NewtonEnabled}" />
+                                    <CheckBox Content="{i18n:T '显示牛顿环范围'}" IsChecked="{Binding ShowNewtonMask}" />
+                                    <Button Content="{i18n:T 'AI 自动识别并修复（实验）'}" Click="OnNewtonAiAutoClick" IsEnabled="{Binding HasImage}" />
+                                    <Button Content="{i18n:T 'AI 修复手绘区域（实验）'}" Click="OnNewtonAiManualClick" IsEnabled="{Binding HasImage}" />
+                                    <Button Content="{i18n:T '自动识别并修复'}" Click="OnNewtonAutoClick" IsEnabled="{Binding HasImage}" />
+                                    <ctl:SliderRow Label="{i18n:T '检测灵敏度'}" Minimum="0" Maximum="1" Decimals="2" Increment="0.05" DefaultValue="0.5" Value="{Binding NewtonSensitivity}" />
+                                    <ctl:SliderRow Label="{i18n:T '修复强度'}" Minimum="0" Maximum="1" Decimals="2" Increment="0.05" DefaultValue="0.8" Value="{Binding NewtonStrength}" />
+                                    <ctl:SliderRow Label="{i18n:T '亮度纹修复'}" Minimum="0" Maximum="1" Decimals="2" Increment="0.05" DefaultValue="0.25" Value="{Binding NewtonLuminance}" />
+                                    <ctl:SliderRow Label="{i18n:T '区域笔半径'}" Minimum="0.003" Maximum="0.2" Decimals="3" Increment="0.005" DefaultValue="0.04" Value="{Binding NewtonBrushSize}" />
+                                    <Grid ColumnDefinitions="*,*">
+                                        <ToggleButton Name="NewtonAddBtn" Grid.Column="0" Classes="sampling" Content="{i18n:T '涂抹区域'}" Click="OnNewtonAddClick" IsEnabled="{Binding HasImage}" />
+                                        <ToggleButton Name="NewtonEraseBtn" Grid.Column="1" Classes="sampling" Content="{i18n:T '排除区域'}" Click="OnNewtonEraseClick" IsEnabled="{Binding HasImage}" Margin="6,0,0,0" />
+                                    </Grid>
+                                    <ctl:SliderRow Label="{i18n:T '条带方向（°）'}" Minimum="-90" Maximum="90" Decimals="0" Increment="1" DefaultValue="0" Value="{Binding NewtonBandAngle}" />
+                                    <Button Content="{i18n:T '细条带修复（手绘）'}" Click="OnNewtonBandsClick" IsEnabled="{Binding HasImage}" />
+                                    <TextBlock Classes="groupHint" TextWrapping="Wrap" Text="{i18n:T '条带方向按当前画面：0° 为横向，90° 为竖向。先涂抹受影响条带；高分辨率分析不会扩大手绘处理范围。'}" />
+                                    <Button Content="{i18n:T '修复手绘区域'}" Click="OnNewtonManualClick" IsEnabled="{Binding HasImage}" />
+                                    <TextBlock Classes="groupHint" TextWrapping="Wrap" Text="{Binding NewtonSummary}" />
+                                    <Button Content="{i18n:T '取消牛顿环分析'}" Click="OnNewtonCancelClick" IsVisible="{Binding IsNewtonAnalysing}" />
+                                    <Button Content="{i18n:T '清除牛顿环修复'}" Click="OnNewtonClearClick" IsEnabled="{Binding HasImage}" />
                                 </StackPanel>
                             </Expander>
 

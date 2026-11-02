@@ -1076,6 +1076,7 @@ public partial class MainViewModel
         DistortionK1 = p.DistortionK1; VignetteAmount = p.VignetteAmount; VignetteFalloff = p.VignetteFalloff;
         // A missing runtime buffer must not erase the roll's declared enable choice.
         SprocketEnabled = p.SprocketEnabled; SprocketThreshold = p.SprocketThreshold ?? 0.9;
+        LoadNewton(p);
         DustEnabled = p.DustEnabled;
         _dustSpots = new List<DustSpot>(p.DustSpots);
         OnPropertyChanged(nameof(DustSpotCount));

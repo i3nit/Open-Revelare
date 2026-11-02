@@ -19,6 +19,11 @@
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
   </ItemGroup>
 
+  <!-- Locally trained optional Newton residual model; never downloaded at app runtime. -->
+  <ItemGroup Condition="Exists('$(MSBuildThisFileDirectory)../../models/newton_fringe_v1.onnx')">
+    <Content Include="../../models/newton_fringe_v1.onnx" Link="models/newton_fringe_v1.onnx" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <!-- Deep-WB 权重。⚠ 这个文件**不在本项目的 GPL-3.0 授权范围内** —— 它按原作者的
        CC BY-NC-SA 4.0 分发，见 models/README.md 与 THIRD_PARTY_NOTICES.txt 第 13 条。
        条件判断是为了让「把模型删掉」仍然能编：只有「智能白平衡」一个功能会因此报错。 -->

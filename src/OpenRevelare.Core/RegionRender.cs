@@ -270,6 +270,10 @@ public static class RegionRender
             return (negOut, realised);
         }
 
+        var newtonBox = cal.NewtonSourceRect ?? (0d, 0d, 1d, 1d);
+        NewtonRings.Apply(slice, cal, (newtonBox.Item1 + (double)b.X0 / frameW * newtonBox.Item3,
+            newtonBox.Item2 + (double)b.Y0 / frameH * newtonBox.Item4,
+            (double)sw / frameW * newtonBox.Item3, (double)sh / frameH * newtonBox.Item4));
         var region = new FrameRegion(b.X0, b.Y0, frameW, frameH);
         if (cal.DistortionK1 != 0.0)
         {
