@@ -1077,6 +1077,7 @@ public partial class MainWindow : Window
     private void OnCropApplyClick(object? sender, RoutedEventArgs e) => CommitCrop();
     private void OnCropCancelClick(object? sender, RoutedEventArgs e) => CancelCropDraft();
 
+    private async void OnNewtonBandsClick(object? sender, RoutedEventArgs e) { ExitMode(); if (Vm is { } vm) await vm.AnalyseNewtonBandsAsync(); }
     private async void OnNewtonAiAutoClick(object? sender, RoutedEventArgs e) { ExitMode(); if (Vm is { } vm) await vm.AnalyseNewtonAiAsync(true); }
     private async void OnNewtonAiManualClick(object? sender, RoutedEventArgs e) { ExitMode(); if (Vm is { } vm) await vm.AnalyseNewtonAiAsync(false); }
     private async void OnNewtonAutoClick(object? sender, RoutedEventArgs e) { ExitMode(); if (Vm is { } vm) await vm.AnalyseNewtonAsync(true); }

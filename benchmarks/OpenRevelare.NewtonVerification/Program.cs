@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using OpenRevelare.Core;
 using OpenRevelare.DeepWb.Onnx;
 using SixLabors.ImageSharp;
@@ -8,18 +9,20 @@ using SixLabors.ImageSharp.PixelFormats;
 
 if (args.Length == 2 && args[0] == "--verify-ai-synthetic") return AiSyntheticVerification.Run(args[1]);
 
-if (args.Length < 3) { Console.Error.WriteLine("Usage: <output-directory> <ncproj-file-or-dash> <RAW> [RAW...] [--manual] [--ai] [--export-training] [--source-preview]"); return 2; }
+if (args.Length < 3) { Console.Error.WriteLine("Usage: <output-directory> <ncproj-file-or-dash> <RAW> [RAW...] [--manual] [--ai] [--export-training] [--source-preview] [--bands=config.json]"); return 2; }
 string output = Path.GetFullPath(args[0]); Directory.CreateDirectory(output);
 Project.Data? project = args[1] == "-" ? null : Project.Load(args[1]);
 var report = new List<object>();
-bool manual = args.Contains("--manual");
+string? bandConfigPath = args.FirstOrDefault(a => a.StartsWith("--bands="))?[8..];
+var bandConfig = bandConfigPath is null ? null : JsonNode.Parse(File.ReadAllText(bandConfigPath))!;
+bool manual = args.Contains("--manual") || bandConfig is not null;
 bool ai = args.Contains("--ai");
 using var estimator = ai ? new OnnxNewtonEstimator() : null;
 string? modelSha = ai ? Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(OnnxNewtonEstimator.DefaultModelPath))).ToLowerInvariant() : null;
 foreach (string path in args.Skip(2).Where(a => !a.StartsWith("--")))
 {
     var timer = Stopwatch.StartNew();
-    var (images, w, h) = RawDecode.DecodeRawDownsampled(path, RawDecode.FbddMode.Off, new[] { args.Contains("--export-training") ? 1400 : 1600 }, RawDecode.Demosaic.Preview);
+    var (images, w, h) = RawDecode.DecodeRawDownsampled(path, RawDecode.FbddMode.Off, new[] { args.Contains("--export-training") ? 1400 : bandConfig is not null ? 4096 : 1600 }, bandConfig is not null ? RawDecode.Demosaic.Full : RawDecode.Demosaic.Preview);
     var pixels = images[0];
     if (args.Contains("--export-training"))
     {
@@ -45,9 +48,22 @@ foreach (string path in args.Skip(2).Where(a => !a.StartsWith("--")))
         return image;
     }
     var before = Render(p);
-    var field = estimator?.Estimate(pixels, .5) ?? NewtonRings.Analyse(pixels, .5, manual: manual);
+    NewtonField field;
+    if (bandConfig is not null)
+    {
+        var a = bandConfig["source_rect"]!.AsArray().Select(n => n!.GetValue<double>()).ToArray();
+        var box = (a[0], a[1], a[2], a[3]);
+        int x0 = (int)Math.Round(box.Item1 * w), y0 = (int)Math.Round(box.Item2 * h);
+        int x1 = (int)Math.Round((box.Item1 + box.Item3) * w), y1 = (int)Math.Round((box.Item2 + box.Item4) * h);
+        var region = RawDecode.DecodeRawRegion(path, RawDecode.RawBackend.LibRaw, RawDecode.FbddMode.Off, x0, y0, x1-x0, y1-y0, w, h) ?? throw new NotSupportedException("RAW region decode unavailable.");
+        var realised = (region.X0 / (double)w, region.Y0 / (double)h, region.Slice.Width / (double)w, region.Slice.Height / (double)h);
+        field = NewtonRings.AnalyseBands(region.Slice, realised, (bandConfig["direction_degrees"]?.GetValue<double>() ?? 0) * Math.PI / 180, .5);
+    }
+    else field = estimator?.Estimate(pixels, .5) ?? NewtonRings.Analyse(pixels, .5, manual: manual);
     p.NewtonEnabled = true; p.NewtonField = field; p.NewtonAutomatic = !manual; p.NewtonStrength = .8; p.NewtonLuminance = .25;
-    if (manual)
+    if (bandConfig is not null)
+        p.NewtonStrokes = JsonSerializer.Deserialize<List<NewtonStroke>>(bandConfig["strokes"]!.ToJsonString())!;
+    else if (manual)
     {
         p.NewtonStrokes = new();
         // A whole-source stress test, not a recommendation to select the complete photograph.
@@ -78,7 +94,7 @@ foreach (string path in args.Skip(2).Where(a => !a.StartsWith("--")))
     string name=Path.GetFileNameWithoutExtension(path);
     comparison.SaveAsJpeg(Path.Combine(output,name+"-comparison.jpg"));
     File.WriteAllText(Path.Combine(output,name+"-field.txt"),field.Encode());
-    report.Add(new { File=Path.GetFileName(path), SourceWidth=w, SourceHeight=h, Ai=ai, ModelSha256=modelSha, SourcePreview=args.Contains("--source-preview"), ManualWholeSourceStressTest=manual, field.Coverage,
+    report.Add(new { File=Path.GetFileName(path), SourceWidth=w, SourceHeight=h, Bands=bandConfig is not null, Ai=ai, ModelSha256=modelSha, SourcePreview=args.Contains("--source-preview"), ManualWholeSourceStressTest=manual && bandConfig is null, field.Coverage,
         MeanAbsoluteRenderedChange=delta/before.Data.Length, Milliseconds=timer.ElapsedMilliseconds });
     Console.WriteLine($"{name}: candidate={field.Coverage:P1}, mean change={delta/before.Data.Length:G4}, {timer.ElapsedMilliseconds} ms");
 }

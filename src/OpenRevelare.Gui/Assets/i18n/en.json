@@ -1220,5 +1220,10 @@
   "AI 自动识别并修复（实验）": "AI automatic repair (experimental)",
   "AI 修复手绘区域（实验）": "AI repair painted regions (experimental)",
   "正在本地估计 AI 干涉残差 …": "Estimating AI interference residuals locally…",
-  "已应用实验性 AI 修复；请关闭蒙版比较细节，并排除误选。": "Experimental AI repair applied. Hide the mask to compare details and exclude false selections."
+  "已应用实验性 AI 修复；请关闭蒙版比较细节，并排除误选。": "Experimental AI repair applied. Hide the mask to compare details and exclude false selections.",
+  "条带方向（°）": "Band direction (°)",
+  "细条带修复（手绘）": "Fine-band repair (painted)",
+  "条带方向按当前画面：0° 为横向，90° 为竖向。先涂抹受影响条带；高分辨率分析不会扩大手绘处理范围。": "Direction follows the current view: 0° horizontal, 90° vertical. Paint affected bands first. High-resolution analysis does not expand the painted repair area.",
+  "正在分析手绘范围内的细条带 …": "Analysing fine bands in the painted region…",
+  "已修复手绘条带；请关闭蒙版检查窗框、文字与重复纹理，必要时用排除笔保护。": "Painted bands repaired. Hide the mask and inspect window frames, text and repeated textures; protect them with the exclusion brush if needed."
 }

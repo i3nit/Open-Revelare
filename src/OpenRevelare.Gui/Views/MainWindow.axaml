@@ -1409,6 +1409,9 @@
                                         <ToggleButton Name="NewtonAddBtn" Grid.Column="0" Classes="sampling" Content="{i18n:T '涂抹区域'}" Click="OnNewtonAddClick" IsEnabled="{Binding HasImage}" />
                                         <ToggleButton Name="NewtonEraseBtn" Grid.Column="1" Classes="sampling" Content="{i18n:T '排除区域'}" Click="OnNewtonEraseClick" IsEnabled="{Binding HasImage}" Margin="6,0,0,0" />
                                     </Grid>
+                                    <ctl:SliderRow Label="{i18n:T '条带方向（°）'}" Minimum="-90" Maximum="90" Decimals="0" Increment="1" DefaultValue="0" Value="{Binding NewtonBandAngle}" />
+                                    <Button Content="{i18n:T '细条带修复（手绘）'}" Click="OnNewtonBandsClick" IsEnabled="{Binding HasImage}" />
+                                    <TextBlock Classes="groupHint" TextWrapping="Wrap" Text="{i18n:T '条带方向按当前画面：0° 为横向，90° 为竖向。先涂抹受影响条带；高分辨率分析不会扩大手绘处理范围。'}" />
                                     <Button Content="{i18n:T '修复手绘区域'}" Click="OnNewtonManualClick" IsEnabled="{Binding HasImage}" />
                                     <TextBlock Classes="groupHint" TextWrapping="Wrap" Text="{Binding NewtonSummary}" />
                                     <Button Content="{i18n:T '取消牛顿环分析'}" Click="OnNewtonCancelClick" IsVisible="{Binding IsNewtonAnalysing}" />

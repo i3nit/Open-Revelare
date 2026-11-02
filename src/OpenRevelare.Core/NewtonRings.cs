@@ -13,13 +13,19 @@ public sealed class NewtonField
 {
     public int Width { get; }
     public int Height { get; }
+    public (double X, double Y, double W, double H) SourceRect { get; }
     public string Id { get; } = Guid.NewGuid().ToString("N");
     private readonly float[] _data;
     [JsonIgnore] public double Coverage => Enumerable.Range(0, Width * Height).Count(i => _data[i * 5 + 4] > .185) / (double)(Width * Height);
-    internal NewtonField(int width, int height, float[] data)
+    internal NewtonField(int width, int height, float[] data, (double X, double Y, double W, double H)? sourceRect = null)
     {
         if (width < 1 || height < 1 || data.Length != checked(width * height * 5))
             throw new ArgumentException("Invalid Newton field dimensions.");
+        var box = sourceRect ?? (0d, 0d, 1d, 1d);
+        if (!double.IsFinite(box.Item1 + box.Item2 + box.Item3 + box.Item4) || box.Item1 < 0 || box.Item2 < 0
+            || box.Item3 <= 0 || box.Item4 <= 0 || box.Item1 + box.Item3 > 1.0000000001 || box.Item2 + box.Item4 > 1.0000000001)
+            throw new ArgumentException("Invalid Newton source rectangle.");
+        SourceRect = box;
         Width = width; Height = height; _data = new float[data.Length];
         // Quantise once, before the first preview, so saving/reopening reproduces exactly the
         // same correction rather than introducing a fresh rounding step on every round trip.
@@ -49,8 +55,13 @@ public sealed class NewtonField
         return new NewtonField(residual.Width, residual.Height, values);
     }
 
+    public NewtonField InSourceRect((double X, double Y, double W, double H) region)
+        => new(Width, Height, _data, region);
+
     public float Sample(double x, double y, int channel)
     {
+        if (x < SourceRect.X || y < SourceRect.Y || x > SourceRect.X + SourceRect.W || y > SourceRect.Y + SourceRect.H) return 0;
+        x = (x - SourceRect.X) / SourceRect.W; y = (y - SourceRect.Y) / SourceRect.H;
         double fx = Math.Clamp(x * Width - .5, 0, Width - 1), fy = Math.Clamp(y * Height - .5, 0, Height - 1);
         int x0 = (int)fx, y0 = (int)fy, x1 = Math.Min(x0 + 1, Width - 1), y1 = Math.Min(y0 + 1, Height - 1);
         double dx = fx - x0, dy = fy - y0;
@@ -65,7 +76,9 @@ public sealed class NewtonField
         using (var zip = new DeflateStream(stream, CompressionLevel.Optimal, true))
         using (var writer = new BinaryWriter(zip))
         {
-            writer.Write(1); writer.Write(Width); writer.Write(Height);
+            bool regional = SourceRect != (0d, 0d, 1d, 1d);
+            writer.Write(regional ? 2 : 1); writer.Write(Width); writer.Write(Height);
+            if (regional) { writer.Write(SourceRect.X); writer.Write(SourceRect.Y); writer.Write(SourceRect.W); writer.Write(SourceRect.H); }
             foreach (float v in _data) writer.Write((short)Math.Round(Math.Clamp(v, -1, 1) * 16384));
         }
         return Convert.ToBase64String(stream.ToArray());
@@ -76,9 +89,12 @@ public sealed class NewtonField
         if (encoded.Length > 16_000_000) throw new InvalidDataException("Newton correction is too large.");
         using var zip = new DeflateStream(new MemoryStream(Convert.FromBase64String(encoded)), CompressionMode.Decompress);
         using var reader = new BinaryReader(zip);
-        if (reader.ReadInt32() != 1) throw new InvalidDataException("Unknown Newton correction version.");
+        int version = reader.ReadInt32();
+        if (version != 1 && version != 2) throw new InvalidDataException("Unknown Newton correction version.");
         int width = reader.ReadInt32(), height = reader.ReadInt32();
         if (width < 1 || height < 1 || width > 1024 || height > 1024) throw new InvalidDataException("Invalid Newton correction size.");
+        (double, double, double, double)? region = version == 2
+            ? (reader.ReadDouble(), reader.ReadDouble(), reader.ReadDouble(), reader.ReadDouble()) : null;
         var values = new float[checked(width * height * 5)];
         for (int i = 0; i < values.Length; i++)
         {
@@ -87,7 +103,7 @@ public sealed class NewtonField
             values[i] = value / 16384f;
         }
         if (zip.ReadByte() != -1) throw new InvalidDataException("Unexpected Newton correction payload.");
-        return new NewtonField(width, height, values);
+        return new NewtonField(width, height, values, region);
     }
 }
 
@@ -97,12 +113,35 @@ public sealed class NewtonField
 public static class NewtonRings
 {
     public static NewtonField Analyse(ImageBuffer source, double sensitivity = .5, CancellationToken cancellation = default, bool manual = false)
+        => AnalyseCore(source, sensitivity, cancellation, manual, null);
+
+    /// <summary>Analyse a separately decoded picture region: whole-scan preview boxing erases
+    /// fine fringes before a detector can see them. Direction is tangent to the bands in source pixels.</summary>
+    public static NewtonField AnalyseBands(ImageBuffer regionPixels, (double X, double Y, double W, double H) sourceRect,
+        double directionRadians = 0, double sensitivity = .5, CancellationToken cancellation = default)
+    {
+        ArgumentNullException.ThrowIfNull(regionPixels);
+        if (regionPixels.Width < 1 || regionPixels.Height < 1) throw new ArgumentException("Empty Newton source image.");
+        if (!double.IsFinite(directionRadians)) throw new ArgumentException("Invalid band direction.");
+        int factor = Resample.BoxFactor(regionPixels.Width, regionPixels.Height, 1024);
+        // Integer boxing discards incomplete right/bottom cells. Stretching those lost pixels
+        // back into the field shifts the phase of fine bands, creating a second fringe.
+        var realised = (sourceRect.X, sourceRect.Y,
+            sourceRect.W * (regionPixels.Width / factor * factor) / regionPixels.Width,
+            sourceRect.H * (regionPixels.Height / factor * factor) / regionPixels.Height);
+        return AnalyseCore(regionPixels, sensitivity, cancellation, true, directionRadians).InSourceRect(realised);
+    }
+
+    private static NewtonField AnalyseCore(ImageBuffer source, double sensitivity, CancellationToken cancellation, bool manual, double? bandDirection)
     {
         ArgumentNullException.ThrowIfNull(source);
         if (source.Width < 1 || source.Height < 1) throw new ArgumentException("Empty Newton source image.");
         if (!double.IsFinite(sensitivity)) throw new ArgumentException("Invalid sensitivity.");
         sensitivity = Math.Clamp(sensitivity, 0, 1);
-        var image = Resample.Box(source, 768);
+        bool bandsOnly = bandDirection is not null;
+        var image = Resample.Box(source, bandsOnly ? 1024 : 768);
+        double tangentX = Math.Cos(bandDirection ?? 0), tangentY = Math.Sin(bandDirection ?? 0);
+        bool InDirection(int fx, int fy) => !bandsOnly || Math.Abs(fx * tangentX + fy * tangentY) <= Math.Max(1.25, Math.Abs(-fx * tangentY + fy * tangentX) * .32);
         int w = image.Width, h = image.Height;
         if (w < 8 || h < 8) return new NewtonField(Math.Max(1, w), Math.Max(1, h), new float[Math.Max(1, w * h) * 5]);
         var log = new float[w * h * 3];
@@ -117,7 +156,7 @@ public static class NewtonRings
             var layer = new float[w * h * 5];
             var weights = new float[w * h];
             double minimumFrequency = size == 64 ? 3.2 : 2.5;
-            double maximumFrequency = size == 64 ? 14 : size == 128 ? 6 : 5;
+            double maximumFrequency = size == 64 ? (bandsOnly ? 28 : 14) : size == 128 ? 6 : 5;
             int stride = size / 2;
             var window = Enumerable.Range(0, size).Select(i => Math.Sin(Math.PI * (i + .5) / size)).ToArray();
             for (int oy = -stride; oy < h; oy += stride) for (int ox = -stride; ox < w; ox += stride)
@@ -147,7 +186,7 @@ public static class NewtonRings
                     Complex luma = (spectra[0][p] + spectra[1][p] + spectra[2][p]) / 3;
                     double chroma = Complex.Abs(spectra[0][p] - spectra[1][p]) + Complex.Abs(spectra[2][p] - spectra[1][p]);
                     power[p] = chroma * chroma + .18 * luma.Magnitude * luma.Magnitude;
-                    bands[(int)radius].Add(power[p]); total += power[p];
+                    bands[(int)radius].Add(power[p]); if (InDirection(fx, fy)) total += power[p];
                 }
                 var baseline = bands.Select(a => { a.Sort(); return a.Count == 0 ? 0 : a[a.Count / 2]; }).ToArray();
                 double SpectralPower(int fx, int fy)
@@ -162,17 +201,17 @@ public static class NewtonRings
                 {
                     if (power[p] <= 0 || peaks.Count == 6) break;
                     int x = p % size, y = p / size, fx = x <= size / 2 ? x : x - size, fy = y <= size / 2 ? y : y - size;
-                    if (fy < 0 || (fy == 0 && fx < 0)) continue;
+                    if (fy < 0 || (fy == 0 && fx < 0) || !InDirection(fx, fy)) continue;
                     int r = (int)Math.Sqrt(fx * fx + fy * fy);
                     double amplitude = Math.Sqrt(power[p]) / (size * size * .4);
-                    if (amplitude < .008 * (1.8 - sensitivity) || power[p] < baseline[r] * (8 - 5 * sensitivity)
+                    if (amplitude < (bandsOnly ? .0015 : .008) * (1.8 - sensitivity) || power[p] < baseline[r] * (8 - 5 * sensitivity)
                         || power[p] / Math.Max(total, 1e-12) < .018 * (1.5 - sensitivity)) continue;
                     double frequency = Math.Sqrt(fx * fx + fy * fy);
                     int lowerX = (int)Math.Round(fx * (frequency - 2.5) / frequency), lowerY = (int)Math.Round(fy * (frequency - 2.5) / frequency);
                     int upperX = (int)Math.Round(fx * (frequency + 2.5) / frequency), upperY = (int)Math.Round(fy * (frequency + 2.5) / frequency);
                     // An isolated scene edge has a broad, decaying spectrum. A fringe needs
                     // a local maximum in FREQUENCY as well as the usual directional prominence.
-                    if (!manual && power[p] < (SpectralPower(lowerX, lowerY) + SpectralPower(upperX, upperY)) * (1.2 - .4 * sensitivity)) continue;
+                    if ((!manual || bandsOnly) && power[p] < (SpectralPower(lowerX, lowerY) + SpectralPower(upperX, upperY)) * (1.2 - .4 * sensitivity)) continue;
                     if (!manual)
                     {
                         Complex rg = spectra[0][p] - spectra[1][p], bg = spectra[2][p] - spectra[1][p];
@@ -210,7 +249,7 @@ public static class NewtonRings
                 {
                     int fx = x <= size / 2 ? x : x - size, fy = y <= size / 2 ? y : y - size;
                     double r = Math.Sqrt(fx * fx + fy * fy);
-                    if (r < minimumFrequency - .5 || r > maximumFrequency + .5) continue;
+                    if (r < minimumFrequency - .5 || r > maximumFrequency + .5 || !InDirection(fx, fy)) continue;
                     double d2 = Math.Min(Math.Pow(fx - peak.X, 2) + Math.Pow(fy - peak.Y, 2),
                                          Math.Pow(fx + peak.X, 2) + Math.Pow(fy + peak.Y, 2));
                     selected[y * size + x] = Math.Max(selected[y * size + x], (float)Math.Exp(-d2 / 2.0));

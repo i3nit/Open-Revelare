@@ -10,11 +10,12 @@ public sealed class NewtonWorkflowTests
     // These exercise the real live-parameter/undo/project path, not just the filter. Painted
     // coordinates must survive crop, straighten and mirrors before the field is generated.
     [Theory]
-    [InlineData(true, false)]
-    [InlineData(false, false)]
-    [InlineData(true, true)]
-    [InlineData(false, true)]
-    public async Task Automatic_and_painted_repairs_are_undoable_saved_and_do_not_edit_the_source(bool automatic, bool ai)
+    [InlineData(true, false, false)]
+    [InlineData(false, false, false)]
+    [InlineData(true, true, false)]
+    [InlineData(false, true, false)]
+    [InlineData(false, false, true)]
+    public async Task Automatic_and_painted_repairs_are_undoable_saved_and_do_not_edit_the_source(bool automatic, bool ai, bool bands)
     {
         string directory = Path.Combine(TestDataIsolation.Root, "newton-workflow-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
@@ -40,7 +41,8 @@ public sealed class NewtonWorkflowTests
         }
         var estimator = new TestEstimator();
         if (ai) vm.NewtonAiEstimatorFactory = () => estimator;
-        if (ai) await vm.AnalyseNewtonAiAsync(automatic); else await vm.AnalyseNewtonAsync(automatic);
+        if (bands) await vm.AnalyseNewtonBandsAsync();
+        else if (ai) await vm.AnalyseNewtonAiAsync(automatic); else await vm.AnalyseNewtonAsync(automatic);
         if (ai) Assert.True(estimator.Disposed);
         Assert.False(vm.IsNewtonAnalysing);
         Assert.True(vm.NewtonEnabled, vm.StatusText);
@@ -69,7 +71,8 @@ public sealed class NewtonWorkflowTests
             Assert.False(vm.IsBusy);
         }
         vm.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(vm.StatusText) && vm.IsNewtonAnalysing) vm.CancelNewtonAnalysis(); };
-        if (ai) await vm.AnalyseNewtonAiAsync(true); else await vm.AnalyseNewtonAsync(true);
+        if (bands) await vm.AnalyseNewtonBandsAsync();
+        else if (ai) await vm.AnalyseNewtonAiAsync(true); else await vm.AnalyseNewtonAsync(true);
         Assert.Same(previous, vm.CurrentFrame.Params.NewtonField);
         Assert.False(vm.IsNewtonAnalysing);
     }

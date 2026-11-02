@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using OpenRevelare.Core;
 using OpenRevelare.DeepWb.Onnx;
 using OpenRevelare.Gui.Interop;
+using OpenRevelare.Gui.Services;
 using OpenRevelare.Presentation;
 
 namespace OpenRevelare.Gui.ViewModels;
@@ -14,6 +15,7 @@ public partial class MainViewModel
     [ObservableProperty] private double _newtonStrength = .8;
     [ObservableProperty] private double _newtonLuminance = .25;
     [ObservableProperty] private double _newtonSensitivity = .5;
+    [ObservableProperty] private double _newtonBandAngle;
     [ObservableProperty] private double _newtonBrushSize = .04;
     [ObservableProperty] private Bitmap? _newtonMaskOverlay;
     [ObservableProperty] private PresentationScene? _newtonMaskScene;
@@ -95,13 +97,27 @@ public partial class MainViewModel
     public void CancelNewtonAnalysis() => _newtonCts?.Cancel();
 
     internal Func<INewtonEstimator>? NewtonAiEstimatorFactory { get; set; }
+    public Task AnalyseNewtonBandsAsync() => AnalyseNewtonAsync(false, bands: true);
     public Task AnalyseNewtonAiAsync(bool automatic) => AnalyseNewtonAsync(automatic, useAi: true);
 
-    public async Task AnalyseNewtonAsync(bool automatic, bool useAi = false)
+    public async Task AnalyseNewtonAsync(bool automatic, bool useAi = false, bool bands = false)
     {
         if (CurrentFrame is not { } frame || !HasImage || IsBusy || _newtonCts is not null) return;
         if (!automatic && !_newtonStrokes.Any(s => !s.Erase))
         { StatusText = Loc.T("请先用牛顿环区域笔涂抹需要修复的位置。"); return; }
+        // Snapshot display-to-sensor mapping on the UI thread, before an asynchronous decode
+        // can switch frames. The field itself stays in sensor coordinates for every render.
+        var corners = new List<(double X, double Y)>();
+        foreach (double y in new[] { 0d, .5, 1d }) foreach (double x in new[] { 0d, .5, 1d })
+            if (DisplayPointToNewtonSource(x, y) is { } point) corners.Add(point);
+        var geometry = ForPreview(BuildParams());
+        var crop = geometry.CropRect ?? (0d, 0d, 1d, 1d);
+        var size = CropFrameSize ?? (W: 1, H: 1);
+        double aspect = size.W * crop.Item3 / Math.Max(1e-9, size.H * crop.Item4);
+        double theta = NewtonBandAngle * Math.PI / 180, step = .1 / Math.Max(1, aspect);
+        var directionStart = DisplayPointToNewtonSource(.5, .5);
+        var directionEnd = DisplayPointToNewtonSource(.5 + step * Math.Cos(theta), .5 + step * Math.Sin(theta) * aspect);
+        var pipelineVersion = _colorPipelineVersion; var tiffAssumption = _tiffInputAssumption;
         CommitLiveParams(frame); CommitUndo();
         var roll = _roll; int version = _editVersion;
         double sensitivity = NewtonSensitivity;
@@ -109,10 +125,28 @@ public partial class MainViewModel
         OnPropertyChanged(nameof(IsNewtonAnalysing));
         try
         {
-            StatusText = useAi ? Loc.T("正在本地估计 AI 干涉残差 …") : Loc.T("正在分析局部干涉纹频谱 …");
+            StatusText = bands ? Loc.T("正在分析手绘范围内的细条带 …") : useAi ? Loc.T("正在本地估计 AI 干涉残差 …") : Loc.T("正在分析局部干涉纹频谱 …");
             var entry = await PreviewAsync(frame.Path, null).WaitAsync(cts.Token);
             var field = await Task.Run(() =>
             {
+                if (bands)
+                {
+                    if (corners.Count == 0 || directionStart is not { } a || directionEnd is not { } b)
+                        throw new InvalidOperationException("No valid picture region for band analysis.");
+                    int fw = entry.SourceWidth, fh = entry.SourceHeight;
+                    int x0 = Math.Clamp((int)Math.Floor(corners.Min(p => p.X) * fw), 0, fw - 1);
+                    int y0 = Math.Clamp((int)Math.Floor(corners.Min(p => p.Y) * fh), 0, fh - 1);
+                    int x1 = Math.Clamp((int)Math.Ceiling(corners.Max(p => p.X) * fw), x0 + 1, fw);
+                    int y1 = Math.Clamp((int)Math.Ceiling(corners.Max(p => p.Y) * fh), y0 + 1, fh);
+                    entry.Source?.RequireCurrent();
+                    var decoded = ImageIo.LoadWorkingRegion(frame.Path, x0, y0, x1-x0, y1-y0, fw, fh,
+                        pipelineVersion, ColorManagement, tiffAssumption)
+                        ?? throw new NotSupportedException("High-resolution regional decode is unavailable for this source.");
+                    cts.Token.ThrowIfCancellationRequested(); entry.Source?.RequireCurrent();
+                    var pixels = decoded.Slice.Pixels;
+                    var rect = (decoded.X0 / (double)fw, decoded.Y0 / (double)fh, pixels.Width / (double)fw, pixels.Height / (double)fh);
+                    return NewtonRings.AnalyseBands(pixels, rect, Math.Atan2((b.Y-a.Y)*fh, (b.X-a.X)*fw), sensitivity, cts.Token);
+                }
                 if (!useAi) return NewtonRings.Analyse(entry.Preview, sensitivity, cts.Token, manual: !automatic);
                 using var estimator = NewtonAiEstimatorFactory?.Invoke() ?? new OnnxNewtonEstimator();
                 return estimator.Estimate(entry.Preview, sensitivity, cts.Token);
@@ -125,7 +159,7 @@ public partial class MainViewModel
             _newtonField = field; _newtonAutomatic = automatic;
             NewtonEnabled = true; ShowNewtonMask = true;
             OnPropertyChanged(nameof(NewtonSummary)); UpdateNewtonOverlay(); ScheduleRender(); CommitUndo();
-            StatusText = useAi ? Loc.T("已应用实验性 AI 修复；请关闭蒙版比较细节，并排除误选。") : automatic ? Loc.F($"已生成牛顿环候选并修复，候选覆盖 {field.Coverage:P0}；请检查误选并用排除笔调整。")
+            StatusText = bands ? Loc.T("已修复手绘条带；请关闭蒙版检查窗框、文字与重复纹理，必要时用排除笔保护。") : useAi ? Loc.T("已应用实验性 AI 修复；请关闭蒙版比较细节，并排除误选。") : automatic ? Loc.F($"已生成牛顿环候选并修复，候选覆盖 {field.Coverage:P0}；请检查误选并用排除笔调整。")
                 : Loc.T("已修复手绘区域；可调整强度、亮度修复比例或关闭比较。");
         }
         catch (OperationCanceledException) { StatusText = Loc.T("牛顿环分析已取消，原修复保持不变。"); }

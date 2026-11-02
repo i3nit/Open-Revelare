@@ -17,14 +17,15 @@ namespace OpenRevelare.Core;
 /// </summary>
 public static class Project
 {
-    // v5 stores Newton correction fields; older builds must refuse rather than silently lose
-    // repairs. Projects without Newton edits retain their old v2/v3/v4 compatibility floor.
+    // v6 adds region-attached correction grids so fine bands survive analysis; v5 stores full-source fields.
+    // Older builds must refuse rather than silently lose repairs. Projects without Newton edits
+    // retain their old v2/v3/v4 compatibility floor.
     // The v3 schema itself gained only one key, so
     // this is not about parsing: a build that predates `color_pipeline_version` reads a v2 file's
     // absent key as "legacy", which is right, but would read a NEW file's key as absent too and
     // render it through the v1 pipeline without a word. Refusing to open is the only honest
     // answer an old build can give, and it can only give it if the version says so.
-    private const int FormatVersion = 5;
+    private const int FormatVersion = 6;
 
     /// <summary>Oldest schema this build still reads. v2 files have no colour-pipeline key.</summary>
     private const int MinimumSupportedFormatVersion = 2;
@@ -37,7 +38,8 @@ public static class Project
     /// </summary>
     private static int FormatVersionFor(Data data)
     {
-        if (data.Frames.Any(f => f.Params.NewtonField is not null || f.Params.NewtonStrokes.Count > 0 || f.Params.NewtonEnabled)) return FormatVersion;
+        if (data.Frames.Any(f => f.Params.NewtonField is { } field && field.SourceRect != (0d, 0d, 1d, 1d))) return 6;
+        if (data.Frames.Any(f => f.Params.NewtonField is not null || f.Params.NewtonStrokes.Count > 0 || f.Params.NewtonEnabled)) return 5;
         bool hasDust = data.Frames.Any(f => f.Params.DustEnabled || f.Params.DustSpots.Count > 0);
         if (hasDust) return 4;
         return data.ColorPipelineVersion == ColorPipelineVersion.ManagedV2 ? 3 : MinimumSupportedFormatVersion;
